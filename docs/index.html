@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>SkiWorld v2 — Winter Park Full Resort (V.Outdoor)</title>
+<style>
+  html,body{margin:0;padding:0;overflow:hidden;background:#0a1420;font-family:"Courier New",monospace;height:100%;}
+  canvas{display:block;}
+  #hud{position:fixed;top:0;left:0;right:0;padding:8px 10px;display:flex;gap:8px;justify-content:center;pointer-events:none;z-index:10;flex-wrap:wrap;}
+  .pod{background:rgba(6,20,32,.72);border:1px solid rgba(0,255,200,.45);border-radius:8px;padding:5px 10px;color:#7dffd9;text-align:center;min-width:84px;text-shadow:0 0 6px rgba(0,255,200,.6);}
+  .pod .v{font-size:16px;font-weight:bold;letter-spacing:1px;}
+  .pod .l{font-size:9px;opacity:.7;letter-spacing:2px;}
+  #trail{position:fixed;top:60px;left:0;right:0;text-align:center;font-size:13px;letter-spacing:2px;z-index:10;pointer-events:none;color:#aef3ff;text-shadow:0 0 8px rgba(0,200,255,.7);}
+  #toast{position:fixed;top:90px;left:0;right:0;text-align:center;font-size:12px;letter-spacing:1px;z-index:10;pointer-events:none;color:#ffd97d;text-shadow:0 0 8px rgba(255,200,0,.6);}
+  #help{position:fixed;bottom:10px;left:0;right:0;text-align:center;color:rgba(174,243,255,.55);font-size:10px;letter-spacing:1px;z-index:10;pointer-events:none;}
+  #map{position:fixed;top:64px;right:10px;border:1px solid rgba(0,255,200,.4);border-radius:8px;background:rgba(6,20,32,.8);z-index:11;}
+  #overlay{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(4,12,20,.85);color:#7dffd9;z-index:20;text-align:center;padding:20px;}
+  #overlay h1{letter-spacing:4px;font-size:24px;margin:0 0 6px;text-shadow:0 0 12px rgba(0,255,200,.8);}
+  #overlay p{color:#aef3ff;font-size:12px;max-width:520px;line-height:1.7;}
+  #overlay .btn{margin-top:16px;padding:12px 32px;border:1px solid #7dffd9;border-radius:8px;color:#7dffd9;font-size:15px;letter-spacing:3px;cursor:pointer;background:rgba(0,255,200,.08);}
+  #overlay .btn:hover{background:rgba(0,255,200,.2);}
+</style>
+</head>
+<body>
+<div id="hud">
+  <div class="pod"><div class="v" id="lat">--</div><div class="l">LAT</div></div>
+  <div class="pod"><div class="v" id="lon">--</div><div class="l">LON</div></div>
+  <div class="pod"><div class="v" id="elev">--</div><div class="l">ELEV FT</div></div>
+  <div class="pod"><div class="v" id="spd">0</div><div class="l">MPH</div></div>
+</div>
+<div id="trail">TRAIL: —</div>
+<div id="toast"></div>
+<canvas id="map" width="200" height="230"></canvas>
+<div id="help">← → carve · ↑/W skate · L ride nearest lift · M map · R respawn · touch: sides steer, tap top = lift</div>
+<div id="overlay">
+  <h1>SKIWORLD v2</h1>
+  <p>WINTER PARK RESORT — full mountain, real data.<br>
+     23 real lifts · 190+ real named runs (OpenStreetMap) · real USGS elevation (2,729–3,664 m).<br>
+     Every frame maps to a true GPS coordinate. Ski anywhere.<br><br>
+     You spawn at the top of The Gondola.</p>
+  <div class="btn" id="startBtn">DROP IN</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ============================================================
+   SkiWorld v2 — real Winter Park Resort
+   Terrain: USGS NED 10m via opentopodata (20x24 grid)
+   Runs/Lifts: OpenStreetMap (piste:type=downhill, aerialway)
+   ============================================================ */
+
+// ---------- REAL ELEVATION GRID (meters, 20 rows S->N x 24 cols W->E) ----------
+const G = {rows:20, cols:24, lat0:39.838, lat1:39.898, lon0:-105.808, lon1:-105.744, e:[
+3511,3557,3586,3615,3619,3605,3617,3638,3654,3529,3449,3460,3433,3409,3366,3318,3242,3149,3034,2935,2967,3038,3130,3219,
+3497,3539,3574,3598,3570,3539,3600,3621,3610,3596,3586,3586,3511,3452,3409,3348,3283,3191,3101,2960,2919,2978,3121,3250,
+3576,3592,3593,3528,3463,3456,3534,3576,3629,3664,3630,3578,3457,3382,3296,3236,3206,3148,3094,2996,2918,2929,3058,3190,
+3572,3603,3597,3534,3425,3355,3406,3488,3548,3593,3555,3487,3466,3426,3352,3342,3301,3239,3157,3035,2909,2932,3019,3126,
+3570,3587,3578,3452,3419,3317,3341,3425,3509,3527,3474,3417,3387,3380,3345,3307,3261,3217,3116,3006,2903,2906,2997,3079,
+3481,3484,3493,3471,3375,3268,3321,3414,3516,3526,3437,3380,3338,3323,3287,3257,3188,3142,3102,2965,2891,2887,2965,3025,
+3381,3441,3457,3440,3352,3267,3265,3320,3415,3454,3453,3421,3410,3394,3335,3292,3247,3246,3119,2986,2891,2886,2952,3079,
+3403,3457,3459,3426,3331,3272,3211,3248,3309,3338,3355,3352,3370,3396,3358,3361,3222,3149,3080,3002,2899,2875,2906,3020,
+3327,3366,3365,3372,3289,3284,3219,3206,3282,3289,3290,3305,3338,3385,3287,3243,3225,3176,3086,2982,2908,2867,2892,2989,
+3254,3262,3283,3266,3213,3175,3140,3195,3243,3256,3257,3291,3306,3263,3224,3183,3093,3073,3025,2971,2921,2863,2889,2942,
+3183,3176,3199,3174,3094,3124,3203,3251,3250,3241,3221,3265,3273,3181,3114,3106,3025,2951,2935,2951,2894,2854,2871,3003,
+3129,3100,3125,3118,3044,3119,3199,3198,3154,3198,3236,3238,3238,3160,3027,2993,2958,2900,2976,2982,2866,2844,2901,3015,
+3134,3083,3054,3063,3023,3067,3102,3069,3146,3163,3161,3218,3258,3154,3053,2958,2914,2880,2918,2932,2839,2845,2913,2982,
+3079,3061,3011,3035,2994,3001,3063,3015,3054,3075,3089,3099,3121,3138,3078,2979,2899,2827,2819,2805,2837,2874,2961,2963,
+3005,2975,2969,2986,3002,2957,3006,2987,3045,3094,3019,2987,2995,2984,2990,2956,2841,2788,2808,2811,2815,2826,2840,2850,
+2992,2975,2950,2936,2967,2935,2945,2981,3032,3037,2971,2906,2909,2911,2896,2829,2779,2783,2815,2854,2902,2914,2922,2944,
+3002,3015,3002,2949,2890,2893,2991,3039,3032,2998,2947,2912,2870,2883,2864,2785,2762,2785,2827,2847,2852,2891,2935,2968,
+2889,2920,2947,2952,2885,2855,2983,3011,3042,2989,2943,2927,2874,2807,2781,2756,2755,2784,2808,2829,2857,2878,2918,2975,
+2812,2835,2856,2871,2855,2832,2896,2949,2920,2905,2855,2829,2826,2767,2744,2742,2770,2821,2854,2932,2983,2992,3001,2969,
+2793,2803,2832,2834,2806,2826,2896,2934,2860,2826,2838,2753,2729,2734,2759,2805,2848,2844,2897,2938,2970,3007,3042,3049]};
+
+// ---------- REAL LIFTS (OpenStreetMap): name|type|bottom;top or top;bottom ----------
+const LIFTS_RAW = `Super Gauge Express|c|39.8748,-105.7603;39.8587,-105.7720
+Iron Horse|c|39.8757,-105.7610;39.8632,-105.7714
+Challenger|c|39.8708,-105.7594;39.8601,-105.7675
+Explorer Express|c|39.8879,-105.7759;39.8756,-105.7752
+Looking Glass|c|39.8840,-105.7891;39.8818,-105.7831
+Arrow|c|39.8866,-105.7638;39.8829,-105.7705
+Prospector Express|c|39.8875,-105.7763;39.8817,-105.7827
+Olympia Express|c|39.8845,-105.7898;39.8689,-105.7751
+Sunnyside Express|c|39.8536,-105.7609;39.8581,-105.7726
+High Lonesome Express|c|39.8724,-105.7832;39.8588,-105.7726
+The Gondola|g|39.8859,-105.7631;39.8746,-105.7752
+Wild Spur Express|c|39.8881,-105.7957;39.8707,-105.7888
+Panoramic Express|c|39.8534,-105.7596;39.8443,-105.7819
+Eagle Wind|c|39.8664,-105.7898;39.8558,-105.7824
+Village Cabriolet|g|39.8823,-105.7574;39.8838,-105.7622
+Discovery|c|39.8880,-105.7747;39.8854,-105.7733
+Gemini Express|c|39.8880,-105.7649;39.8847,-105.7717
+Comet|m|39.8883,-105.7650;39.8881,-105.7654
+Meteor|m|39.8887,-105.7653;39.8885,-105.7657
+Endeavor|c|39.8893,-105.7695;39.8850,-105.7719
+Pony Express|c|39.8744,-105.7611;39.8667,-105.7668
+Galloping Goose|c|39.8738,-105.7608;39.8702,-105.7600
+Tubing|m|39.8832,-105.7590;39.8824,-105.7592`;
+
+// ---------- REAL RUNS (OpenStreetMap): name|difficulty|lat,lon;... ----------
+// difficulty: e=easy(green) i=intermediate(blue) a=advanced(black) n=novice ?=park
+// names in EXPERT set below are double-black/EX terrain (OSM code collision fix)
+const EXPERT = new Set(["Vasquez Cirque Access","South Headwall","The Cowboys","E Chute","G Chute","F Chute","Hole-In-The-Wall","Awe Chute","Alphabet Chutes","Key Hole","Better Not","Baldy's","Jeff's","Cornice Canyon","Playing Fields","West Headwalll","Slim Pickins","Shenko's Chute","Hard Core Resistor","Heart of Darkness","A Chute","B Chute","C Chute","D Chute","G-Face","Go-Joe","Shadow Chute"]);
+const RUNS_RAW = `Trestle|a|39.8576,-105.7678;39.8573,-105.7642;39.8585,-105.7615;39.8593,-105.7597;39.8600,-105.7583;39.8604,-105.7567
+Lower Arrowhead Loop|i|39.8667,-105.7668;39.8690,-105.7672;39.8722,-105.7658;39.8743,-105.7641;39.8750,-105.7632
+Village Way|e|39.8598,-105.7766;39.8641,-105.7785;39.8674,-105.7796;39.8705,-105.7797;39.8718,-105.7823;39.8724,-105.7833
+Mary Jane|i|39.8687,-105.7747;39.8682,-105.7708;39.8712,-105.7675;39.8735,-105.7661;39.8750,-105.7624;39.8748,-105.7616
+OutRigger Trail|a|39.8757,-105.7766;39.8772,-105.7768;39.8796,-105.7767;39.8810,-105.7770;39.8812,-105.7770
+Village Way|e|39.8801,-105.7816;39.8804,-105.7793;39.8828,-105.7754;39.8848,-105.7707;39.8894,-105.7687;39.8895,-105.7687
+Hobo Alley|e|39.8587,-105.7723;39.8591,-105.7729;39.8602,-105.7742;39.8608,-105.7755;39.8618,-105.7758
+Quick Getaway|i|39.8755,-105.7753;39.8757,-105.7763;39.8756,-105.7772;39.8754,-105.7782;39.8757,-105.7788
+Whistlestop|e|39.8587,-105.7723;39.8622,-105.7723;39.8687,-105.7748;39.8726,-105.7778;39.8739,-105.7832;39.8720,-105.7827
+Cranmer|i|39.8739,-105.7761;39.8745,-105.7781;39.8777,-105.7795;39.8828,-105.7769;39.8867,-105.7760;39.8879,-105.7760
+Lonesome Whistle Upper|e|39.8631,-105.7779;39.8635,-105.7791;39.8641,-105.7797;39.8647,-105.7797;39.8653,-105.7793
+Lonesome Whistle Upper|e|39.8622,-105.7723;39.8614,-105.7741;39.8617,-105.7754;39.8624,-105.7767;39.8631,-105.7779
+Retta's Run|a|39.8756,-105.7754;39.8761,-105.7756;39.8771,-105.7754;39.8825,-105.7757
+Outhouse|a|39.8744,-105.7755;39.8744,-105.7749;39.8739,-105.7718;39.8736,-105.7688;39.8735,-105.7661
+Dormouse|e|39.8689,-105.7751;39.8702,-105.7756;39.8712,-105.7765;39.8723,-105.7775;39.8726,-105.7778
+March Hare|e|39.8732,-105.7760;39.8737,-105.7772;39.8746,-105.7792;39.8759,-105.7807;39.8771,-105.7827;39.8774,-105.7834
+Dormouse|e|39.8727,-105.7773;39.8733,-105.7786;39.8739,-105.7792;39.8746,-105.7794;39.8749,-105.7796
+Phantom Bridge|a|39.8610,-105.7655;39.8628,-105.7642;39.8637,-105.7640;39.8651,-105.7639
+Derailer|a|39.8605,-105.7673;39.8610,-105.7655;39.8614,-105.7641;39.8617,-105.7628
+Railbender|a|39.8612,-105.7648;39.8632,-105.7620;39.8655,-105.7610;39.8692,-105.7595
+Runaway|a|39.8614,-105.7641;39.8608,-105.7631;39.8601,-105.7626;39.8597,-105.7611;39.8592,-105.7604
+Needles Eye|a|39.8642,-105.7600;39.8645,-105.7596;39.8651,-105.7588;39.8666,-105.7580;39.8679,-105.7586
+Short Haul|a|39.8622,-105.7605;39.8625,-105.7603;39.8627,-105.7598;39.8627,-105.7587;39.8622,-105.7573
+Long Haul|a|39.8621,-105.7619;39.8622,-105.7605;39.8620,-105.7589;39.8622,-105.7573;39.8620,-105.7565
+Derailer|a|39.8617,-105.7628;39.8621,-105.7619;39.8633,-105.7616;39.8642,-105.7600
+Cannonball|a|39.8617,-105.7628;39.8616,-105.7612;39.8613,-105.7585;39.8609,-105.7570;39.8610,-105.7566
+Derailer|a|39.8642,-105.7600;39.8677,-105.7587;39.8688,-105.7585;39.8696,-105.7594
+Corona Way|i|39.8536,-105.7601;39.8591,-105.7565;39.8629,-105.7556;39.8662,-105.7545;39.8689,-105.7576;39.8704,-105.7597
+Coupler|a|39.8645,-105.7582;39.8640,-105.7566;39.8637,-105.7551
+Boiler|a|39.8645,-105.7596;39.8645,-105.7582;39.8655,-105.7567;39.8665,-105.7560;39.8678,-105.7561
+Brakeman|a|39.8642,-105.7600;39.8639,-105.7593;39.8634,-105.7585;39.8634,-105.7572;39.8626,-105.7562
+Sleeper|a|39.8598,-105.7681;39.8616,-105.7688;39.8638,-105.7665;39.8692,-105.7595;39.8704,-105.7597
+Little Ten|a|39.8605,-105.7673;39.8609,-105.7669;39.8615,-105.7667;39.8625,-105.7667;39.8630,-105.7670
+Columbine Lower|a|39.8555,-105.7660;39.8553,-105.7650;39.8550,-105.7643;39.8541,-105.7633;39.8536,-105.7630
+Roundhouse|i|39.8574,-105.7706;39.8577,-105.7689;39.8576,-105.7678;39.8560,-105.7652;39.8559,-105.7622;39.8553,-105.7618
+Runaway|a|39.8601,-105.7626;39.8598,-105.7623;39.8596,-105.7613;39.8593,-105.7607
+Rollins Ridge|i|39.8596,-105.7714;39.8595,-105.7702;39.8598,-105.7681;39.8605,-105.7673
+Sidetrack|a|39.8594,-105.7717;39.8598,-105.7713;39.8603,-105.7707;39.8603,-105.7700;39.8616,-105.7688
+Sleepy Hollow|a|39.8669,-105.7621;39.8680,-105.7617;39.8700,-105.7607;39.8711,-105.7606
+Columbine Upper|i|39.8566,-105.7686;39.8556,-105.7666;39.8555,-105.7660
+Bluebell|i|39.8578,-105.7729;39.8566,-105.7686;39.8541,-105.7686;39.8531,-105.7658;39.8538,-105.7616;39.8535,-105.7609
+Edelweiss|i|39.8578,-105.7729;39.8555,-105.7742;39.8534,-105.7737;39.8534,-105.7694;39.8528,-105.7637;39.8533,-105.7608
+Primrose|i|39.8565,-105.7780;39.8553,-105.7760;39.8542,-105.7751;39.8538,-105.7743
+Village Way|i|39.8443,-105.7819;39.8462,-105.7822;39.8503,-105.7834;39.8540,-105.7821;39.8563,-105.7790;39.8565,-105.7780
+Lupin|a|39.8553,-105.7810;39.8547,-105.7791;39.8543,-105.7781;39.8537,-105.7762
+Olympia Spur|n|39.8632,-105.7714;39.8636,-105.7723;39.8644,-105.7737;39.8651,-105.7740;39.8660,-105.7737
+Moose Wallow|e|39.8850,-105.7719;39.8863,-105.7719;39.8875,-105.7707;39.8888,-105.7709;39.8893,-105.7700;39.8893,-105.7695
+Parkway|e|39.8829,-105.7705;39.8831,-105.7711;39.8835,-105.7711;39.8842,-105.7708;39.8848,-105.7707
+Bill Wilson's Way|e|39.8854,-105.7733;39.8859,-105.7733;39.8868,-105.7736;39.8875,-105.7742;39.8880,-105.7747
+Aces & Eights|a|39.8735,-105.7899;39.8748,-105.7895;39.8756,-105.7894;39.8763,-105.7894
+Allan Phipps|e|39.8801,-105.7813;39.8821,-105.7792;39.8843,-105.7781;39.8855,-105.7773;39.8873,-105.7763;39.8875,-105.7763
+Balch|a|39.8772,-105.7740;39.8782,-105.7729;39.8805,-105.7720;39.8827,-105.7718;39.8839,-105.7723
+Big Valley|e|39.8754,-105.7956;39.8773,-105.7958;39.8788,-105.7950;39.8822,-105.7937;39.8853,-105.7952;39.8867,-105.7958
+Bradley's Bash|i|39.8756,-105.7752;39.8764,-105.7747;39.8777,-105.7740;39.8795,-105.7736;39.8814,-105.7732;39.8836,-105.7730
+Buckaroo|i|39.8771,-105.7914;39.8788,-105.7908;39.8807,-105.7900;39.8823,-105.7912;39.8837,-105.7922;39.8856,-105.7927
+Butch's Breezeway|i|39.8821,-105.7829;39.8862,-105.7826;39.8871,-105.7818;39.8875,-105.7789;39.8874,-105.7777
+Chuck Wagon|a|39.8806,-105.7900;39.8805,-105.7896;39.8805,-105.7892;39.8806,-105.7884;39.8806,-105.7882
+Drunken Frenchman|a|39.8687,-105.7747;39.8695,-105.7737;39.8695,-105.7721;39.8706,-105.7696;39.8714,-105.7690;39.8716,-105.7684
+Engeldive|a|39.8835,-105.7828;39.8846,-105.7817;39.8851,-105.7798;39.8856,-105.7790;39.8862,-105.7782;39.8874,-105.7765
+Branch Line|a|39.8696,-105.7628;39.8703,-105.7627;39.8711,-105.7625;39.8720,-105.7620;39.8729,-105.7613;39.8731,-105.7610
+Gambler|a|39.8712,-105.7888;39.8724,-105.7889;39.8731,-105.7886;39.8743,-105.7882;39.8753,-105.7889;39.8759,-105.7894
+Gandy Dancer|a|39.8677,-105.7728;39.8687,-105.7713;39.8697,-105.7700;39.8715,-105.7684;39.8719,-105.7677;39.8720,-105.7673
+Golden Spike|a|39.8644,-105.7709;39.8658,-105.7697;39.8675,-105.7687;39.8682,-105.7685;39.8691,-105.7687
+Gunbarrel|e|39.8706,-105.7889;39.8712,-105.7888;39.8708,-105.7857;39.8707,-105.7839;39.8716,-105.7824;39.8720,-105.7827
+Hughes|a|39.8763,-105.7749;39.8770,-105.7730;39.8782,-105.7719;39.8800,-105.7688;39.8824,-105.7670;39.8835,-105.7677
+Jack Kendrick|e|39.8817,-105.7827;39.8852,-105.7837;39.8873,-105.7841;39.8880,-105.7808;39.8874,-105.7775;39.8872,-105.7764
+Larry Sale|i|39.8835,-105.7711;39.8842,-105.7697;39.8850,-105.7682;39.8854,-105.7668;39.8867,-105.7644;39.8866,-105.7638
+Little Pierre|i|39.8796,-105.7697;39.8807,-105.7694;39.8816,-105.7687;39.8829,-105.7679;39.8835,-105.7677;39.8837,-105.7679
+Lonesome Whistle Lower|i|39.8720,-105.7829;39.8734,-105.7857;39.8754,-105.7875;39.8776,-105.7895;39.8797,-105.7887;39.8815,-105.7872
+Lower Egress|i|39.8664,-105.7898;39.8675,-105.7914;39.8689,-105.7930;39.8707,-105.7952;39.8736,-105.7954;39.8754,-105.7956
+Lower Hughes|a|39.8829,-105.7705;39.8832,-105.7687;39.8841,-105.7668;39.8842,-105.7662;39.8851,-105.7653;39.8859,-105.7638
+Mulligan's Mile|a|39.8791,-105.7705;39.8796,-105.7704;39.8816,-105.7707;39.8821,-105.7708;39.8827,-105.7705;39.8829,-105.7705
+Over'N'Underwood|a|39.8817,-105.7827;39.8832,-105.7808;39.8837,-105.7797;39.8841,-105.7786;39.8843,-105.7781
+Wild Spur Trail|a|39.8712,-105.7891;39.8731,-105.7898;39.8740,-105.7904;39.8755,-105.7908;39.8762,-105.7912
+Wild Spur Trail|i|39.8795,-105.7924;39.8810,-105.7929;39.8820,-105.7933;39.8824,-105.7937
+Quickdraw|i|39.8749,-105.7916;39.8764,-105.7912;39.8773,-105.7919;39.8774,-105.7927;39.8786,-105.7933;39.8794,-105.7948
+Rainbow Cut|a|39.8671,-105.7669;39.8692,-105.7656;39.8724,-105.7643;39.8734,-105.7622;39.8748,-105.7604
+Riflesight Notch|a|39.8667,-105.7668;39.8669,-105.7659;39.8674,-105.7654;39.8694,-105.7633;39.8698,-105.7616;39.8700,-105.7607
+Shoo Fly|e|39.8702,-105.7600;39.8718,-105.7605;39.8728,-105.7609;39.8735,-105.7610;39.8740,-105.7607;39.8744,-105.7611
+Shootout|i|39.8769,-105.7914;39.8780,-105.7916;39.8792,-105.7921;39.8796,-105.7929;39.8805,-105.7940;39.8807,-105.7941
+Ski Papa|e|39.8854,-105.7733;39.8858,-105.7750;39.8864,-105.7756;39.8870,-105.7757;39.8875,-105.7757
+Stagecoach|i|39.8721,-105.7902;39.8727,-105.7925;39.8733,-105.7931;39.8738,-105.7935;39.8744,-105.7945;39.8754,-105.7956
+Sterling Way|a|39.8632,-105.7714;39.8644,-105.7709;39.8653,-105.7714;39.8666,-105.7710;39.8685,-105.7700
+Sundance|i|39.8711,-105.7892;39.8722,-105.7903;39.8734,-105.7911;39.8750,-105.7917;39.8762,-105.7941;39.8778,-105.7955
+Tie Siding|e|39.8702,-105.7600;39.8713,-105.7596;39.8722,-105.7599;39.8728,-105.7598;39.8736,-105.7605;39.8738,-105.7608
+Thunderbird|a|39.8558,-105.7824;39.8595,-105.7841;39.8602,-105.7848;39.8607,-105.7865;39.8613,-105.7893;39.8616,-105.7898
+Upper Arrowhead Loop|a|39.8651,-105.7703;39.8653,-105.7694;39.8658,-105.7684;39.8664,-105.7676;39.8667,-105.7668
+Wagon Train|e|39.8842,-105.7892;39.8851,-105.7908;39.8857,-105.7937;39.8869,-105.7954;39.8877,-105.7963;39.8881,-105.7957
+Fireberry Glade|a|39.8534,-105.7826;39.8535,-105.7792;39.8536,-105.7774;39.8537,-105.7762;39.8538,-105.7749;39.8536,-105.7742
+Sky Pilot|a|39.8515,-105.7835;39.8524,-105.7791;39.8523,-105.7771;39.8529,-105.7752
+Larkspur|a|39.8453,-105.7819;39.8498,-105.7790;39.8513,-105.7766;39.8523,-105.7755;39.8532,-105.7746;39.8532,-105.7743
+Forget-Me-Not|i|39.8445,-105.7820;39.8454,-105.7794;39.8471,-105.7778;39.8494,-105.7759;39.8518,-105.7747;39.8524,-105.7746
+Juniper|i|39.8471,-105.7778;39.8493,-105.7773;39.8509,-105.7761;39.8525,-105.7748;39.8528,-105.7745
+Parry's Peek|i|39.8443,-105.7819;39.8458,-105.7760;39.8479,-105.7715;39.8481,-105.7657;39.8510,-105.7616;39.8530,-105.7605
+Parry's Peek|i|39.8506,-105.7619;39.8517,-105.7621;39.8526,-105.7613;39.8530,-105.7605
+Forever Eva|i|39.8483,-105.7669;39.8500,-105.7655;39.8517,-105.7642;39.8524,-105.7626;39.8531,-105.7608
+Forever Eva|i|39.8494,-105.7659;39.8497,-105.7648;39.8507,-105.7638;39.8516,-105.7632;39.8523,-105.7630
+Johnstone Junction|a|39.8483,-105.7688;39.8503,-105.7680;39.8523,-105.7675;39.8528,-105.7675
+Kinnikinnic|a|39.8476,-105.7727;39.8493,-105.7726;39.8507,-105.7722;39.8520,-105.7714;39.8533,-105.7711
+Willett's Way|a|39.8480,-105.7713;39.8498,-105.7708;39.8511,-105.7707;39.8533,-105.7705
+Calypso|i|39.8465,-105.7744;39.8492,-105.7737;39.8506,-105.7734;39.8517,-105.7733;39.8529,-105.7729;39.8534,-105.7729
+Paintbrush|i|39.8458,-105.7760;39.8488,-105.7748;39.8514,-105.7743;39.8528,-105.7745;39.8534,-105.7737
+Vasquez Cirque Access|e|39.8440,-105.7824;39.8409,-105.7876;39.8370,-105.7962;39.8411,-105.7986;39.8451,-105.8006;39.8491,-105.8018
+South Headwall|e|39.8404,-105.7974;39.8424,-105.7967;39.8434,-105.7964;39.8446,-105.7960
+The Cowboys|e|39.8433,-105.8004;39.8436,-105.7997;39.8436,-105.7991;39.8442,-105.7971
+Waterfall|a|39.8543,-105.7980;39.8545,-105.7954;39.8547,-105.7939;39.8554,-105.7928
+South Basin|a|39.8442,-105.7971;39.8446,-105.7960;39.8462,-105.7938;39.8488,-105.7929;39.8500,-105.7929;39.8512,-105.7928
+Rollover|a|39.8492,-105.7972;39.8495,-105.7960;39.8497,-105.7948;39.8499,-105.7932;39.8500,-105.7929
+Eldorado|a|39.8501,-105.7984;39.8507,-105.7966;39.8509,-105.7952;39.8513,-105.7928
+Upper Egress|i|39.8512,-105.7928;39.8554,-105.7928;39.8586,-105.7909;39.8616,-105.7898;39.8651,-105.7893;39.8664,-105.7898
+Eagle Wind|a|39.8605,-105.7858;39.8616,-105.7865;39.8632,-105.7877;39.8644,-105.7884;39.8661,-105.7897;39.8662,-105.7898
+Sharp Nose|a|39.8639,-105.7881;39.8641,-105.7885;39.8643,-105.7889;39.8644,-105.7891;39.8646,-105.7893
+Thunderbird Traverse|a|39.8589,-105.7759;39.8598,-105.7782;39.8603,-105.7812;39.8601,-105.7835;39.8599,-105.7844
+Left Hand|a|39.8561,-105.7819;39.8563,-105.7835;39.8556,-105.7858;39.8550,-105.7887;39.8563,-105.7912;39.8574,-105.7918
+Little Raven|a|39.8562,-105.7842;39.8573,-105.7854;39.8584,-105.7864;39.8596,-105.7873;39.8606,-105.7882;39.8611,-105.7886
+Medicine Man|a|39.8556,-105.7858;39.8568,-105.7872;39.8580,-105.7882;39.8592,-105.7890;39.8603,-105.7896;39.8609,-105.7901
+Black Coal|a|39.8547,-105.7873;39.8565,-105.7891;39.8578,-105.7901;39.8589,-105.7909
+Switchyard|e|39.8583,-105.7730;39.8589,-105.7759;39.8599,-105.7763;39.8611,-105.7765;39.8621,-105.7771;39.8629,-105.7774
+High Lonesome Trail|e|39.8601,-105.7736;39.8615,-105.7747;39.8635,-105.7762;39.8655,-105.7777;39.8698,-105.7810;39.8725,-105.7831
+Hook Up|e|39.8688,-105.7752;39.8702,-105.7765;39.8711,-105.7775;39.8710,-105.7793;39.8710,-105.7808
+Jabberwocky|i|39.8716,-105.7779;39.8730,-105.7804;39.8746,-105.7825;39.8767,-105.7843;39.8789,-105.7857;39.8805,-105.7862
+White Rabbit|i|39.8711,-105.7772;39.8726,-105.7786;39.8740,-105.7801;39.8753,-105.7815;39.8765,-105.7826;39.8774,-105.7834
+White Rabbit Lower|e|39.8774,-105.7834;39.8787,-105.7845;39.8797,-105.7851;39.8808,-105.7867;39.8826,-105.7878;39.8839,-105.7883
+Cheshire Cat|i|39.8750,-105.7832;39.8759,-105.7849;39.8775,-105.7857;39.8793,-105.7868;39.8810,-105.7870
+Tweedle Dum|a|39.8819,-105.7832;39.8825,-105.7848;39.8831,-105.7864;39.8837,-105.7879;39.8839,-105.7883
+Tweedle Dee|i|39.8825,-105.7830;39.8834,-105.7842;39.8841,-105.7856;39.8840,-105.7871;39.8839,-105.7883
+Norwegian|a|39.8827,-105.7670;39.8831,-105.7666;39.8836,-105.7664;39.8839,-105.7663;39.8842,-105.7663
+Brian's Run|a|39.8824,-105.7670;39.8830,-105.7663;39.8835,-105.7657;39.8842,-105.7650;39.8846,-105.7645;39.8849,-105.7643
+Mock Turtle|e|39.8856,-105.7840;39.8861,-105.7856;39.8865,-105.7874;39.8862,-105.7887;39.8846,-105.7885;39.8842,-105.7885
+Tin Horn|e|39.8862,-105.7887;39.8859,-105.7894;39.8857,-105.7904;39.8856,-105.7915;39.8854,-105.7919
+Rendezvous|i|39.8837,-105.7844;39.8848,-105.7847;39.8862,-105.7853;39.8871,-105.7857;39.8864,-105.7870
+Cranmer|i|39.8740,-105.7780;39.8747,-105.7784
+Cranmer|i|39.8755,-105.7756;39.8753,-105.7762;39.8749,-105.7766;39.8748,-105.7770
+Dilly Dally Alley|i|39.8763,-105.7894;39.8767,-105.7894;39.8769,-105.7893;39.8772,-105.7893;39.8778,-105.7895
+Easy Way|e|39.8884,-105.7767;39.8884,-105.7765;39.8889,-105.7760;39.8894,-105.7760;39.8889,-105.7756;39.8882,-105.7753
+Easy Way|e|39.8881,-105.7818;39.8891,-105.7808;39.8891,-105.7781;39.8909,-105.7773;39.8894,-105.7769;39.8884,-105.7767
+Mad Tea Party|e|39.8801,-105.7816;39.8799,-105.7838;39.8803,-105.7850;39.8805,-105.7862
+March Hare|i|39.8771,-105.7820;39.8781,-105.7830;39.8788,-105.7836;39.8790,-105.7840;39.8794,-105.7849
+Village Way|e|39.8894,-105.7747;39.8906,-105.7723;39.8907,-105.7687;39.8889,-105.7665;39.8876,-105.7652;39.8875,-105.7648
+Vista Dome Cutoff|i|39.8817,-105.7827;39.8811,-105.7813;39.8812,-105.7802
+Vista Dome|e|39.8817,-105.7827;39.8801,-105.7816
+Super Gauge Trail|a|39.8603,-105.7707;39.8625,-105.7692;39.8678,-105.7654;39.8723,-105.7622;39.8738,-105.7613
+Sluice Box|a|39.8618,-105.7707;39.8622,-105.7715;39.8630,-105.7702;39.8627,-105.7693;39.8618,-105.7707
+Pine Cliffs|a|39.8632,-105.7712;39.8653,-105.7687;39.8650,-105.7683;39.8631,-105.7690;39.8629,-105.7715;39.8632,-105.7712
+Narrow Gauge|a|39.8633,-105.7718;39.8642,-105.7720;39.8654,-105.7728;39.8662,-105.7730;39.8665,-105.7733
+Sober Englishman|i|39.8742,-105.7750;39.8729,-105.7746;39.8714,-105.7731;39.8692,-105.7722;39.8682,-105.7708
+Corridor|e|39.8748,-105.7611;39.8760,-105.7613;39.8784,-105.7602;39.8815,-105.7623;39.8850,-105.7637;39.8859,-105.7635
+Porcupine|e|39.8849,-105.7717;39.8858,-105.7712;39.8873,-105.7704;39.8883,-105.7697;39.8891,-105.7694
+Bobcat|e|39.8876,-105.7707;39.8879,-105.7704;39.8882,-105.7702;39.8886,-105.7701;39.8892,-105.7697
+Marmot Flats|e|39.8858,-105.7720;39.8869,-105.7725;39.8877,-105.7732;39.8880,-105.7745
+Dogpatch|i|39.8851,-105.7754;39.8851,-105.7727;39.8834,-105.7742;39.8844,-105.7755;39.8851,-105.7754
+Belle Fourche|a|39.8494,-105.7834;39.8482,-105.7872;39.8469,-105.7888;39.8468,-105.7904;39.8481,-105.7928;39.8485,-105.7930
+E Chute|e|39.8484,-105.8017;39.8489,-105.8005;39.8501,-105.7984
+G Chute|e|39.8491,-105.8018;39.8498,-105.8009;39.8499,-105.8008;39.8502,-105.8002;39.8501,-105.7984
+100's|a|39.8479,-105.7970;39.8479,-105.7964;39.8480,-105.7960;39.8483,-105.7949;39.8492,-105.7929
+F Chute|e|39.8488,-105.8018;39.8501,-105.7984
+Engeldive|a|39.8851,-105.7798;39.8851,-105.7792;39.8850,-105.7787;39.8851,-105.7781;39.8851,-105.7775
+Bellmar Bowl|i|39.8596,-105.7689;39.8592,-105.7685;39.8588,-105.7684;39.8585,-105.7683;39.8578,-105.7681
+Roundhouse|i|39.8553,-105.7618;39.8537,-105.7608
+Halfpipe|?|39.8782,-105.7811;39.8794,-105.7807
+Hole-In-The-Wall|e|39.8597,-105.7663;39.8598,-105.7648;39.8600,-105.7646;39.8600,-105.7644
+Awe Chute|e|39.8606,-105.7653;39.8602,-105.7642
+Spirit Chute|e|39.8889,-105.7665;39.8890,-105.7664;39.8892,-105.7665;39.8894,-105.7666;39.8897,-105.7666;39.8898,-105.7666
+Turnpike|e|39.8882,-105.7753;39.8901,-105.7741;39.8911,-105.7718;39.8911,-105.7677;39.8888,-105.7652;39.8881,-105.7646
+Wildwood Glade|i|39.8559,-105.7732;39.8564,-105.7721;39.8560,-105.7712;39.8550,-105.7718;39.8549,-105.7743;39.8559,-105.7732
+Wildwood Glade|i|39.8565,-105.7729;39.8567,-105.7694;39.8534,-105.7703;39.8535,-105.7736;39.8558,-105.7709;39.8565,-105.7729
+Lower Parkway|i|39.8895,-105.7687;39.8892,-105.7680;39.8879,-105.7674;39.8872,-105.7667;39.8874,-105.7649
+Mary Jane Upper|a|39.8660,-105.7737;39.8665,-105.7733;39.8666,-105.7732;39.8670,-105.7729;39.8677,-105.7723
+Alphabet Chutes|e|39.8464,-105.8003;39.8494,-105.8018;39.8503,-105.7983;39.8464,-105.8003
+Village Way|e|39.8724,-105.7833;39.8755,-105.7850;39.8766,-105.7866;39.8776,-105.7831;39.8799,-105.7817;39.8800,-105.7816
+Village Way|e|39.8565,-105.7780;39.8579,-105.7761;39.8590,-105.7762;39.8598,-105.7766
+Bellmar Bowl|i|39.8575,-105.7704;39.8591,-105.7715;39.8594,-105.7697;39.8586,-105.7685;39.8575,-105.7704
+Stagecoach Trees|a|39.8704,-105.7886;39.8669,-105.7904;39.8705,-105.7948;39.8752,-105.7955;39.8715,-105.7897;39.8704,-105.7886
+Key Hole|e|39.8586,-105.7646;39.8590,-105.7638
+Better Not|e|39.8590,-105.7652;39.8592,-105.7647;39.8595,-105.7644;39.8596,-105.7642
+Baldy's|e|39.8608,-105.7652;39.8604,-105.7641
+Jeff's|e|39.8610,-105.7650;39.8609,-105.7643;39.8607,-105.7640;39.8605,-105.7640
+Cornice Canyon|e|39.8408,-105.7982;39.8413,-105.7978;39.8420,-105.7975;39.8426,-105.7970;39.8429,-105.7965
+Playing Fields|e|39.8412,-105.7989;39.8416,-105.7985;39.8422,-105.7983;39.8427,-105.7978;39.8433,-105.7969;39.8434,-105.7964
+West Headwalll|e|39.8423,-105.7998;39.8428,-105.7989;39.8433,-105.7982;39.8438,-105.7972;39.8443,-105.7961
+Slim Pickins|e|39.8444,-105.8007;39.8442,-105.7998;39.8442,-105.7986;39.8442,-105.7973;39.8443,-105.7967
+Shenko's Chute|e|39.8463,-105.8003;39.8455,-105.7995;39.8452,-105.7991;39.8450,-105.7982;39.8446,-105.7974;39.8443,-105.7965
+Hard Core Resistor|e|39.8451,-105.8006;39.8448,-105.7994;39.8446,-105.7982;39.8447,-105.7975
+Heart of Darkness|e|39.8463,-105.8003;39.8465,-105.7997;39.8467,-105.7992;39.8464,-105.7985;39.8463,-105.7975;39.8461,-105.7970
+A Chute|e|39.8467,-105.7992;39.8469,-105.7990;39.8473,-105.7987;39.8477,-105.7984;39.8480,-105.7975;39.8479,-105.7970
+B Chute|e|39.8465,-105.7997;39.8469,-105.7997;39.8475,-105.7993;39.8479,-105.7985;39.8479,-105.7980
+C Chute|e|39.8471,-105.8011;39.8475,-105.8004;39.8479,-105.7993;39.8479,-105.7985
+D Chute|e|39.8478,-105.8016;39.8480,-105.8005;39.8484,-105.7992;39.8489,-105.7980;39.8492,-105.7972
+G-Face|e|39.8501,-105.8020;39.8505,-105.8009;39.8507,-105.7994;39.8508,-105.7987
+Go-Joe|e|39.8519,-105.8013;39.8515,-105.8002;39.8512,-105.7992;39.8508,-105.7987
+Shadow Chute|e|39.8536,-105.8004;39.8540,-105.8002;39.8542,-105.7995;39.8542,-105.7986;39.8543,-105.7980
+Village Way|e|39.8895,-105.7687;39.8901,-105.7698;39.8904,-105.7710;39.8906,-105.7716;39.8908,-105.7716`;
+
+// ---------- GEO <-> WORLD ----------
+const LATC=(G.lat0+G.lat1)/2, LONC=(G.lon0+G.lon1)/2, BASE=2700;
+const M_LAT=111320, M_LON=111320*Math.cos(LATC*Math.PI/180);
+const geoX = lon => (lon-LONC)*M_LON;          // +x = east
+const geoZ = lat => -(lat-LATC)*M_LAT;         // +z = south... (north = -z)
+const XMIN=geoX(G.lon0), XMAX=geoX(G.lon1), ZMIN=geoZ(G.lat1), ZMAX=geoZ(G.lat0);
+function toGPS(x,z,y){ return {lat: LATC - z/M_LAT, lon: LONC + x/M_LON, elevFt:(y+BASE)*3.28084}; }
+
+// bilinear elevation + tiny detail noise
+function hash(n){ return Math.abs((Math.sin(n*127.1)*43758.5453)%1); }
+function noise2(x,z){ const xi=Math.floor(x),zi=Math.floor(z),xf=x-xi,zf=z-zi;
+  const s=(a,b)=>hash(a*57+b*131), u=xf*xf*(3-2*xf), v=zf*zf*(3-2*zf);
+  return s(xi,zi)*(1-u)*(1-v)+s(xi+1,zi)*u*(1-v)+s(xi,zi+1)*(1-u)*v+s(xi+1,zi+1)*u*v; }
+function heightAt(x,z){
+  const fx=Math.min(.9999,Math.max(0,(x-XMIN)/(XMAX-XMIN)))*(G.cols-1);
+  const fz=Math.min(.9999,Math.max(0,(ZMAX-z)/(ZMAX-ZMIN)))*(G.rows-1); // row0 = south = ZMAX
+  const i=Math.floor(fz), j=Math.floor(fx), u=fx-j, v=fz-i;
+  const e=(r,c)=>G.e[Math.min(G.rows-1,r)*G.cols+Math.min(G.cols-1,c)];
+  const h=e(i,j)*(1-u)*(1-v)+e(i,j+1)*u*(1-v)+e(i+1,j)*(1-u)*v+e(i+1,j+1)*u*v;
+  return h-BASE + 2.5*noise2(x*0.008,z*0.008) + 0.8*noise2(x*0.05,z*0.05);
+}
+function gradAt(x,z){ const d=6; return [(heightAt(x+d,z)-heightAt(x-d,z))/(2*d),(heightAt(x,z+d)-heightAt(x,z-d))/(2*d)]; }
+
+// ---------- PARSE DATA ----------
+const DIFF_COLOR = {e:0x2ecc71, n:0x7bed9f, i:0x3498db, a:0x1a1a2e, x:0xe67e22, p:0xff7f50};
+const DIFF_NAME  = {e:'GREEN', n:'GREEN', i:'BLUE', a:'BLACK', x:'EXPERT ◆◆', p:'TERRAIN PARK'};
+function parsePts(s){ return s.split(';').map(p=>{const [la,lo]=p.split(',').map(Number); return [geoX(lo), geoZ(la)];}); }
+const RUNS = RUNS_RAW.split('\n').map(l=>{ const [n,d,g]=l.split('|');
+  let diff = d==='?' ? 'p' : d; if(diff==='e' && EXPERT.has(n)) diff='x';
+  return {name:n.toUpperCase(), diff, pts:parsePts(g)}; });
+const LIFTS = LIFTS_RAW.split('\n').map(l=>{ const [n,t,g]=l.split('|'); const p=parsePts(g);
+  const [a,b] = heightAt(p[0][0],p[0][1]) < heightAt(p[1][0],p[1][1]) ? [p[0],p[1]] : [p[1],p[0]];
+  return {name:n.toUpperCase(), type:t, bot:a, top:b}; });
+
+// ---------- THREE ----------
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x9fd8ef);
+scene.fog=new THREE.Fog(0x9fd8ef, 400, 2600);
+const camera=new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 1, 8000);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight); renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+document.body.appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xcfefff,0x8899aa,.95));
+const sun=new THREE.DirectionalLight(0xfff2d8,.85); sun.position.set(-1500,2500,-800); scene.add(sun);
+
+// ---------- TERRAIN MESH ----------
+(function(){
+  const SX=110, SZ=96;
+  const geo=new THREE.PlaneGeometry(XMAX-XMIN, ZMAX-ZMIN, SX, SZ);
+  geo.rotateX(-Math.PI/2);
+  const pos=geo.attributes.position, colors=[];
+  const cSnow=new THREE.Color(0xf4f8ff), cTree=new THREE.Color(0xdfeee2),
+        cRock=new THREE.Color(0xcdd3dd), cValley=new THREE.Color(0xdce8d8);
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i), z=pos.getZ(i), h=heightAt(x,z);
+    pos.setY(i,h);
+    const em=h+BASE;
+    let c = em>3450?cRock : em>3350?cSnow : em<2800?cValley : (noise2(x*.01,z*.01)>.55?cTree:cSnow);
+    colors.push(c.r,c.g,c.b);
+  }
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors,3));
+  const flat=geo.toNonIndexed(); flat.computeVertexNormals();
+  scene.add(new THREE.Mesh(flat, new THREE.MeshPhongMaterial({vertexColors:true, flatShading:true, shininess:6})));
+})();
+
+// ---------- RUN RIBBONS ----------
+(function(){
+  for(const r of RUNS){
+    const mat=new THREE.MeshBasicMaterial({color:DIFF_COLOR[r.diff], side:THREE.DoubleSide,
+      transparent:true, opacity: r.diff==='a'||r.diff==='x' ? .8 : .65});
+    const W = 9, verts=[], idx=[];
+    // densify polyline then build a flat strip draped on terrain
+    const P=[];
+    for(let s=0;s<r.pts.length-1;s++){
+      const [x1,z1]=r.pts[s],[x2,z2]=r.pts[s+1];
+      const n=Math.max(2,Math.ceil(Math.hypot(x2-x1,z2-z1)/30));
+      for(let k=0;k<n;k++) P.push([x1+(x2-x1)*k/n, z1+(z2-z1)*k/n]);
+    }
+    P.push(r.pts[r.pts.length-1]);
+    for(let s=0;s<P.length;s++){
+      const [x,z]=P[s];
+      const [nx,nz]=(s<P.length-1)?[P[s+1][0]-x,P[s+1][1]-z]:[x-P[s-1][0],z-P[s-1][1]];
+      const L=Math.hypot(nx,nz)||1, px=-nz/L*W/2, pz=nx/L*W/2;
+      verts.push(x+px, heightAt(x+px,z+pz)+1.2, z+pz,  x-px, heightAt(x-px,z-pz)+1.2, z-pz);
+      if(s>0){ const b=(s-1)*2; idx.push(b,b+1,b+2, b+1,b+3,b+2); }
+    }
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(verts,3));
+    g.setIndex(idx);
+    scene.add(new THREE.Mesh(g,mat));
+  }
+})();
+
+// ---------- LIFTS ----------
+(function(){
+  const cabMat=new THREE.MeshPhongMaterial({color:0x333a45});
+  const towGeo=new THREE.CylinderGeometry(1,1.4,14,5);
+  for(const lf of LIFTS){
+    const a=new THREE.Vector3(lf.bot[0],heightAt(lf.bot[0],lf.bot[1])+13,lf.bot[1]);
+    const b=new THREE.Vector3(lf.top[0],heightAt(lf.top[0],lf.top[1])+13,lf.top[1]);
+    const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints([a,b]),
+      new THREE.LineBasicMaterial({color:0x222833}));
+    scene.add(line);
+    const D=a.distanceTo(b), nT=Math.max(2,Math.floor(D/160));
+    for(let t=0;t<=nT;t++){
+      const p=a.clone().lerp(b,t/nT);
+      const tw=new THREE.Mesh(towGeo,cabMat);
+      tw.position.set(p.x, heightAt(p.x,p.z)+7, p.z);
+      scene.add(tw);
+    }
+  }
+})();
+
+// ---------- TREES ----------
+(function(){
+  const runPts=[]; RUNS.forEach(r=>r.pts.forEach(p=>runPts.push(p)));
+  const geoT=new THREE.ConeGeometry(4,14,5), matT=new THREE.MeshPhongMaterial({color:0x1e5c3a,flatShading:true});
+  const inst=new THREE.InstancedMesh(geoT,matT,900); let n=0;
+  const m=new THREE.Matrix4();
+  for(let i=0;i<4000 && n<900;i++){
+    const x=XMIN+hash(i*3.1)*(XMAX-XMIN), z=ZMIN+hash(i*7.7)*(ZMAX-ZMIN);
+    const em=heightAt(x,z)+BASE;
+    if(em>3400||em<2760) continue;                       // treeline / valley floor
+    let ok=true;
+    for(const p of runPts){ const dx=p[0]-x,dz=p[1]-z; if(dx*dx+dz*dz<45*45){ok=false;break;} }
+    if(!ok) continue;
+    const s=.8+hash(i*13.3)*1.4;
+    m.makeScale(s,s,s); m.setPosition(x,heightAt(x,z)+7*s,z);
+    inst.setMatrixAt(n++,m);
+  }
+  inst.count=n; scene.add(inst);
+})();
+
+// ---------- SKIER ----------
+const skier=new THREE.Group();
+(function(){
+  const mm=c=>new THREE.MeshPhongMaterial({color:c,flatShading:true});
+  const body=new THREE.Mesh(new THREE.BoxGeometry(.9,1.2,.55),mm(0xe74c3c)); body.position.y=1.2;
+  const legs=new THREE.Mesh(new THREE.BoxGeometry(.75,.75,.5),mm(0x2c3e50)); legs.position.y=.5;
+  const head=new THREE.Mesh(new THREE.SphereGeometry(.34,6,5),mm(0xf1c40f)); head.position.y=2.05;
+  const sL=new THREE.Mesh(new THREE.BoxGeometry(.2,.09,2.6),mm(0x00e5ff)); sL.position.set(-.24,.07,.3);
+  const sR=sL.clone(); sR.position.x=.24;
+  skier.add(body,legs,head,sL,sR); scene.add(skier);
+})();
+
+// ---------- STATE ----------
+const GOND=LIFTS.find(l=>l.name==='THE GONDOLA');
+let px,pz,heading,speed,running=false,toastT=0;
+function toast(s){ document.getElementById('toast').textContent=s; toastT=3; }
+function spawnAt(pt){ px=pt[0]; pz=pt[1]; speed=0;
+  const [gx,gz]=gradAt(px,pz); heading=Math.atan2(-gx,-gz); } // face downhill
+function respawn(){ spawnAt(GOND.top); toast('THE GONDOLA — SUMMIT'); }
+respawn();
+
+const keys={};
+addEventListener('keydown',e=>{keys[e.code]=true;
+  if(e.code==='KeyR') respawn();
+  if(e.code==='KeyL') tryLift();
+  if(e.code==='KeyM') mapEl.style.display = mapEl.style.display==='none'?'block':'none';});
+addEventListener('keyup',e=>keys[e.code]=false);
+let touchDir=0;
+addEventListener('touchstart',e=>{const t=e.touches[0];
+  if(t.clientY<innerHeight*.25){ tryLift(); return; }
+  touchDir = t.clientX<innerWidth/2?-1:1;},{passive:true});
+addEventListener('touchend',()=>touchDir=0);
+
+function tryLift(){
+  let best=null,bd=1e9;
+  for(const lf of LIFTS){ const d=Math.hypot(lf.bot[0]-px,lf.bot[1]-pz); if(d<bd){bd=d;best=lf;} }
+  if(best && bd<120){ spawnAt(best.top); toast('RODE '+best.name+' ▲'); }
+  else toast('NO LIFT NEARBY (nearest: '+best.name+' '+Math.round(bd)+'m)');
+}
+
+// ---------- MINIMAP ----------
+const mapEl=document.getElementById('map'), mctx=mapEl.getContext('2d');
+const MW=200,MH=230;
+const mx=x=>(x-XMIN)/(XMAX-XMIN)*(MW-16)+8, mz=z=>(z-ZMIN)/(ZMAX-ZMIN)*(MH-16)+8;
+const mapBase=document.createElement('canvas'); mapBase.width=MW; mapBase.height=MH;
+(function(){
+  const c=mapBase.getContext('2d');
+  c.fillStyle='rgba(6,20,32,1)'; c.fillRect(0,0,MW,MH);
+  const cs={e:'#2ecc71',n:'#7bed9f',i:'#3498db',a:'#dfe6ee',x:'#e67e22',p:'#ff7f50'};
+  for(const r of RUNS){ c.strokeStyle=cs[r.diff]; c.lineWidth=r.diff==='a'?1.4:1.1; c.beginPath();
+    r.pts.forEach((p,i)=> i? c.lineTo(mx(p[0]),mz(p[1])) : c.moveTo(mx(p[0]),mz(p[1]))); c.stroke(); }
+  c.strokeStyle='#8892a6'; c.lineWidth=1; c.setLineDash([3,2]);
+  for(const lf of LIFTS){ c.beginPath(); c.moveTo(mx(lf.bot[0]),mz(lf.bot[1])); c.lineTo(mx(lf.top[0]),mz(lf.top[1])); c.stroke(); }
+  c.setLineDash([]);
+  c.fillStyle='#aef3ff'; c.font='9px monospace'; c.fillText('N ↑',6,12);
+})();
+
+// ---------- TRAIL DETECTION ----------
+function distToSeg(x,z,a,b){
+  const dx=b[0]-a[0],dz=b[1]-a[1],L2=dx*dx+dz*dz||1;
+  let t=((x-a[0])*dx+(z-a[1])*dz)/L2; t=Math.max(0,Math.min(1,t));
+  const qx=a[0]+t*dx-x,qz=a[1]+t*dz-z; return qx*qx+qz*qz;
+}
+let trailTimer=0;
+function nearestRun(){
+  let best=null,bd=1e9;
+  for(const r of RUNS) for(let s=0;s<r.pts.length-1;s++){
+    const d=distToSeg(px,pz,r.pts[s],r.pts[s+1]); if(d<bd){bd=d;best=r;}
+  }
+  return bd<45*45 ? best : null;
+}
+
+// ---------- GAME LOOP ----------
+document.getElementById('startBtn').addEventListener('click',()=>{
+  document.getElementById('overlay').style.display='none'; running=true;});
+const $=id=>document.getElementById(id);
+const clock=new THREE.Clock();
+
+function tick(){
+  requestAnimationFrame(tick);
+  const dt=Math.min(clock.getDelta(),.05);
+  if(running){
+    let input=(keys.ArrowLeft||keys.KeyA?-1:0)+(keys.ArrowRight||keys.KeyD?1:0)+touchDir;
+    heading += input*(2.2 - Math.min(1.4, speed/22))*dt;
+    const dirX=Math.sin(heading), dirZ=Math.cos(heading);
+    const [gx,gz]=gradAt(px,pz);
+    const slopeAccel = -9.8*(dirX*gx + dirZ*gz)*0.95;          // gravity along heading
+    const drag = 0.004*speed*speed + 0.25 + 0.5*Math.abs(input);
+    speed += (slopeAccel - drag*Math.sign(speed||1))*dt;
+    if((keys.ArrowUp||keys.KeyW) && speed<4) speed += 5*dt;    // skate
+    speed = Math.max(0, Math.min(32, speed));
+    px += dirX*speed*dt; pz += dirZ*speed*dt;
+    px=Math.max(XMIN+20,Math.min(XMAX-20,px)); pz=Math.max(ZMIN+20,Math.min(ZMAX-20,pz));
+  }
+  const y=heightAt(px,pz);
+  skier.position.set(px,y,pz);
+  skier.rotation.y=heading+Math.PI;
+  skier.rotation.z=-((keys.ArrowLeft||keys.KeyA?-1:0)+(keys.ArrowRight||keys.KeyD?1:0)+touchDir)*.4;
+
+  const dirX=Math.sin(heading), dirZ=Math.cos(heading);
+  const camT=new THREE.Vector3(px-dirX*18, y+9, pz-dirZ*18);
+  camera.position.lerp(camT, Math.min(1,dt*3.5));
+  camera.lookAt(px, y+2.5, pz+dirZ*6);
+
+  // HUD
+  const g=toGPS(px,pz,y);
+  $('lat').textContent=g.lat.toFixed(5)+'°N';
+  $('lon').textContent=Math.abs(g.lon).toFixed(5)+'°W';
+  $('elev').textContent=Math.round(g.elevFt).toLocaleString();
+  $('spd').textContent=Math.round(speed*2.23694);
+  trailTimer-=dt;
+  if(trailTimer<=0){ trailTimer=.3;
+    const r=nearestRun();
+    $('trail').textContent = r ? 'TRAIL: '+r.name+' · '+DIFF_NAME[r.diff] : 'OFF-PISTE';
+    $('trail').style.color = r ? {e:'#7dff9d',n:'#7dff9d',i:'#7db8ff',a:'#e8ecf4',x:'#ffb46b',p:'#ff9f80'}[r.diff] : '#ffd97d';
+  }
+  if(toastT>0){ toastT-=dt; if(toastT<=0) $('toast').textContent=''; }
+
+  // minimap
+  mctx.drawImage(mapBase,0,0);
+  mctx.fillStyle='#ff4757'; mctx.beginPath();
+  mctx.arc(mx(px),mz(pz),3.5,0,7); mctx.fill();
+  mctx.strokeStyle='#ff4757'; mctx.beginPath();
+  mctx.moveTo(mx(px),mz(pz)); mctx.lineTo(mx(px)+Math.sin(heading)*8, mz(pz)+Math.cos(heading)*8); mctx.stroke();
+
+  renderer.render(scene,camera);
+}
+tick();
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+</script>
+</body>
+</html>

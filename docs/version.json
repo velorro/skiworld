@@ -1,0 +1,7 @@
+{
+  "name": "SkiWorld — Winter Park",
+  "version": "2.0.1",
+  "built": "2026-07-04",
+  "changes": "v2 full resort (192 runs, 23 lifts, USGS terrain) + Drop In button TDZ bugfix",
+  "data_sources": ["OpenStreetMap (runs/lifts)", "USGS NED 10m via opentopodata (elevation)"]
+}
