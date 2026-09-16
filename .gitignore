@@ -1,0 +1,8 @@
+node_modules/
+master-agent/node_modules/
+master-agent/.eve/
+master-agent/.next/
+master-agent/.vercel/
+master-agent/.env*
+.DS_Store
+*.tsbuildinfo
